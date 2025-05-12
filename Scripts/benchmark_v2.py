@@ -13,6 +13,7 @@ import re
 import math
 from math import sqrt
 from itertools import product
+from scipy.spatial.distance import pdist, squareform
 import proton_nomenclature 
 import PacsyCloseQRef as PACSY
 import json
@@ -252,29 +253,44 @@ def distance3D(atom1, atom2):
               (atom1[1] - atom2[1]) ** 2 +
               (atom1[2] - atom2[2]) ** 2)
 
+# def createDistanceMatrix(pdb_list):
+#     '''
+#     _________________________________________________________________________
+#     input: parsed PDB list
+#     output: distance matrix and key list
+
+#     calculating the distance between each and every atom
+
+#     setting the 'keylist': chainID + '_'+ amino acid + sequence number + atom
+#     _________________________________________________________________________
+#     '''
+#     distMat = np.zeros( (len(pdb_list), len(pdb_list), 4, 4 ) )
+#     keyList = []
+#     for i in range(len(pdb_list)):
+#       nSeq, x, y, z, aaa, a, atm, c = pdb_list[i]
+#       keyList.append(c+'_'+a+str(nSeq)+atm)
+#       for j in range(i+1, len(pdb_list)):
+#         nSeq2, x2, y2, z2, aaa2, a2, atm2, c2 = pdb_list[j]
+#         dist = distance3D( (x, y, z), (x2, y2, z2))
+#         distMat[i, j, 0, 1] = \
+#         distMat[j, i, 1, 0] = dist
+#     return distMat, keyList
 def createDistanceMatrix(pdb_list):
-    '''
-    _________________________________________________________________________
-    input: parsed PDB list
-    output: distance matrix and key list
 
-    calculating the distance between each and every atom
+  n_atoms = len(pdb_list)
+  keyList = []
+  coords = np.zeros((n_atoms,3), dtype=np.float32)
 
-    setting the 'keylist': chainID + '_'+ amino acid + sequence number + atom
-    _________________________________________________________________________
-    '''
-    distMat = np.zeros( (len(pdb_list), len(pdb_list), 4, 4 ) )
-    keyList = []
-    for i in range(len(pdb_list)):
-      nSeq, x, y, z, aaa, a, atm, c = pdb_list[i]
-      keyList.append(c+'_'+a+str(nSeq)+atm)
-      for j in range(i+1, len(pdb_list)):
-        nSeq2, x2, y2, z2, aaa2, a2, atm2, c2 = pdb_list[j]
-        dist = distance3D( (x, y, z), (x2, y2, z2))
-        distMat[i, j, 0, 1] = \
-        distMat[j, i, 1, 0] = dist
-    return distMat, keyList
+  for i in range(n_atoms):
+    nSeq, x, y, z, aaa, a, atm, c = pdb_list[i]
+    keyList.append(c+'_'+a+str(nSeq)+atm)
+    coords[i,0] = x
+    coords[i,1] = y
+    coords[i,2] = z  
 
+  distMat = pdist(coords, metric='euclidean')
+  distMat_square = squareform(distMat)
+  return distMat_square, keyList
 def get_shift(seqidx, atomname, cs_list):
     '''
     ____________________________________________________________
@@ -330,15 +346,16 @@ def parse_key(key):
     sep = c+'_'+a+str(nSeq)
     atm = key.split(sep)[1]
     return c, a, nSeq, atm
-def create_noesy_peak_list(pdb_list, noesy_type, cs_list, distMat):
+
+def create_noesy_peak_list(keyList, noesy_type, cs_list, distMat):
   c_list = 'ABCD'
   lines = ''
   header = '  %20s    %5s   %5s   %5s' % ('Assignments','w1','w2','w3')
   lines += header + '\n'
   lines += '\n'
-  
-  for i in range(len(pdb_list)):
-    nseq, x, y, z, aaa, a, atm, c = pdb_list[i]
+  for i in range(len(keyList)):
+    c, a, nseq, atm = parse_key(keyList[i])
+    nseq = int(nseq)
     atm = proton_nomenclature.s32tos12(a,atm) # alter nomenclature from 32 system to 12 system for XPLOR-NIH 
 
     try: # get correlated heavy atom
@@ -371,20 +388,22 @@ def create_noesy_peak_list(pdb_list, noesy_type, cs_list, distMat):
     grp1 = f'{a}{nseq}{ncatm}' # heavy atom and reside/sequence number
     grp2 = f'{atm}' # connected H
 
-    for j in range(i+1, len(pdb_list)):
-      nseq2, x2, y2, z2, aaa2, a2, atm2, c2 = pdb_list[j]
-      dist = distMat[i, j, c_list.index(c), c_list.index(c2)]
+    for j in range(i+1, len(keyList)):
+      c2, a2, nseq2, atm2 = parse_key(keyList[j])
+      nseq2 = int(nseq2)
       if c == c2:
          continue
+      dist = distMat[i, j]
+      print (nseq2)
       if dist == 0:
          continue
       if dist > 6:
          continue
-    
       try: # get thru space H shifts from chain B
         h2_shift = get_shift(nseq2, atm2, cs_list)
       except:
         continue
+      
       if h2_shift < -1000:
         continue   
       
@@ -403,6 +422,80 @@ def create_noesy_peak_list(pdb_list, noesy_type, cs_list, distMat):
         seen.add(item)
 
   return ('\n').join(result)
+
+# def create_noesy_peak_list(pdb_list, noesy_type, cs_list, distMat):
+#   c_list = 'ABCD'
+#   lines = ''
+#   header = '  %20s    %5s   %5s   %5s' % ('Assignments','w1','w2','w3')
+#   lines += header + '\n'
+#   lines += '\n'
+  
+#   for i in range(len(pdb_list)):
+#     nseq, x, y, z, aaa, a, atm, c = pdb_list[i]
+#     atm = proton_nomenclature.s32tos12(a,atm) # alter nomenclature from 32 system to 12 system for XPLOR-NIH 
+
+#     try: # get correlated heavy atom
+#       ncatm = proton_nomenclature.protein_attached_heavy_atoms[a][atm] 
+#     except:
+#       try:
+#         ncatm = proton_nomenclature.protein_attached_heavy_atoms[a][atm[:2]]
+#       except:
+#          continue
+    
+#     if noesy_type == 'nnoe':
+#       if ncatm[0] != 'N':
+#         continue
+#     elif noesy_type == 'cnoe':
+#       if ncatm[0] != 'C':
+#         continue
+
+#     try: # get shifts from shifts list
+#       nc_shift = get_shift(nseq, ncatm, cs_list)
+#     except:
+#       continue
+#     try:
+#       h_shift = get_shift(nseq, atm, cs_list)
+#     except:
+#       continue
+    
+#     if nc_shift < -1000 or h_shift < -1000: # if shifts are not present then remove
+#       continue
+    
+#     grp1 = f'{a}{nseq}{ncatm}' # heavy atom and reside/sequence number
+#     grp2 = f'{atm}' # connected H
+
+#     for j in range(i+1, len(pdb_list)):
+#       nseq2, x2, y2, z2, aaa2, a2, atm2, c2 = pdb_list[j]
+#       dist = distMat[i, j, c_list.index(c), c_list.index(c2)]
+#       if c == c2:
+#          continue
+#       if dist == 0:
+#          continue
+#       if dist > 6:
+#          continue
+    
+#       try: # get thru space H shifts from chain B
+#         h2_shift = get_shift(nseq2, atm2, cs_list)
+#       except:
+#         continue
+#       if h2_shift < -1000:
+#         continue   
+      
+#       grp3 = f'{atm2}' 
+#       asgn = f'{grp1}-{grp2}-{grp3}'
+#       line = '  %20s %8.3f %8.3f %8.3f' % (asgn, nc_shift, h_shift,
+#                                                 h2_shift)
+#       lines += line + '\n'
+      
+#   lines_list = lines.split('\n')
+#   seen = set()
+#   result = []
+#   for item in lines_list:
+#      if item not in seen:
+#         result.append(item)
+#         seen.add(item)
+
+#   return ('\n').join(result)
 ############################################################################################################################################################
 #                                                             Parse and Filter NOESY Peak Lists                                                            #           
 ############################################################################################################################################################
@@ -533,31 +626,56 @@ def aa_contact_map(pdbList):
                 aa_matrix[nSeq - 1, nSeq2 - 1,0, 1] = \
                     aa_matrix[nSeq2 - 1, nSeq - 1, 1, 0] = 1
     return aa_matrix
-
 def distance_probability (pdbList):
-    '''
-    __________________________________________________________________________________
-    input: parsed PDB file from Alphafold-Multimer
-    output: the probability of NOESY signal appear, essentially any atoms less than 6A
-    __________________________________________________________________________________
-    '''
-    #obtain x,y,z coordinates from alphafold file
-    readPDB_ = readPDB(pdbList,1,nuclei=['H',])
-    distMat, keyList = createDistanceMatrix(readPDB_) # wil give distMat and keyList
-    for i in range(distMat.shape[0]):
-        for j in range(distMat.shape[1]):
-            for k in range(distMat.shape[2]):
-                for l in range(distMat.shape[3]):
-                    if k == l and abs(i-j) < 2:
-                        distMat[i, j, k, l] = 1
-                        continue
-                    elif k == l:
-                        distMat[i, j, k, l] = 0
-                        continue
-                    else:
-                       distMat[i, j, k, l] = \
-                        math.exp((1-max(distMat[i, j, k, l]-6, 0)**1.5)) # the smaller the value, the less likely the signal would appear
-    return distMat, keyList
+  filtered_pdb_list = readPDB(pdbList,1,nuclei=['H',])
+  n_atoms = len(filtered_pdb_list)
+
+  nSeq_list = [atom_data[0] for atom_data in filtered_pdb_list]
+  c_list = [atom_data[7] for atom_data in filtered_pdb_list]
+
+  distMat_square, keyList = createDistanceMatrix(filtered_pdb_list)
+
+  prob_distMat = np.zeros_like(distMat_square, dtype=np.float32)
+  for i in range(n_atoms):
+     for j in range(i+1,n_atoms):
+        nSeq = nSeq_list[i]
+        nSeq2 = nSeq_list[j]
+        c = c_list[i]
+        c2 = c_list[j]
+
+        if c == c2 and abs(nSeq-nSeq2) < 2:
+          distance_probability = 1.0
+        else:
+          distance = distMat_square[i,j]
+          distance_probability = math.exp(1 - (max(distance-6.0,0)**1.5))
+        prob_distMat[i,j] =\
+        prob_distMat[j,i] = distance_probability
+  return prob_distMat, keyList
+
+# def distance_probability (pdbList):
+#     '''
+#     __________________________________________________________________________________
+#     input: parsed PDB file from Alphafold-Multimer
+#     output: the probability of NOESY signal appear, essentially any atoms less than 6A
+#     __________________________________________________________________________________
+#     '''
+#     #obtain x,y,z coordinates from alphafold file
+#     readPDB_ = readPDB(pdbList,1,nuclei=['H',])
+#     distMat, keyList = createDistanceMatrix(readPDB_) # wil give distMat and keyList
+#     for i in range(distMat.shape[0]):
+#         for j in range(distMat.shape[1]):
+#             for k in range(distMat.shape[2]):
+#                 for l in range(distMat.shape[3]):
+#                     if k == l and abs(i-j) < 2:
+#                         distMat[i, j, k, l] = 1
+#                         continue
+#                     elif k == l:
+#                         distMat[i, j, k, l] = 0
+#                         continue
+#                     else:
+#                        distMat[i, j, k, l] = \
+#                         math.exp((1-max(distMat[i, j, k, l]-6, 0)**1.5)) # the smaller the value, the less likely the signal would appear
+#     return distMat, keyList
 
 ############################################################################################################################################################
 #                                                              Write .tbl File for XPLOR_NIH                                                               # 
@@ -580,7 +698,7 @@ def write_tbl_file(combination, AF_readPDB, aa_dict,seq_dict):
 # nSeq aaa atom nSeq2 aaa2 atom2 distance
 # combination is a tuple
 # [HA-H],[H], frq, proton_dist_probability, normailzed frq, Bayes' Theorem, normalized Bayes', endurance score
-  proton_matrix = np.zeros((len(AF_readPDB),len(AF_readPDB),4,4)) # (87,87,4,4) for 2N74
+  # proton_matrix = np.zeros((len(AF_readPDB),len(AF_readPDB),4,4)) # (87,87,4,4) for 2N74
   line = ''
   for k in combination:
     # get get attached 'H'and seq_id from chain A
@@ -610,12 +728,12 @@ def write_tbl_file(combination, AF_readPDB, aa_dict,seq_dict):
       continue
     
     dist = distance3D( (x, y, z), (x2, y2, z2))
-    # print (dist)
+    print ('b')
     if dist < 1.7:
       continue
     if dist < 5.5:
-      proton_matrix[int(cnSeq)-1,int(cnSeq2)-1,0, 1] = \
-        proton_matrix[int(cnSeq2)-1,int(cnSeq)-1, 1, 0] = dist
+      # proton_matrix[int(cnSeq)-1,int(cnSeq2)-1,0, 1] = \
+      #   proton_matrix[int(cnSeq2)-1,int(cnSeq)-1, 1, 0] = dist
       distRound = round(dist,2)
       dist2 = round(distRound - 1.7,2)
 
@@ -630,8 +748,8 @@ def write_tbl_file(combination, AF_readPDB, aa_dict,seq_dict):
 #                                                                       Implementation                                                                     # 
 ############################################################################################################################################################
 
-PDB_id = '5HUZ' 
-POKY_job_id = '250429_145141_133'
+PDB_id = '6TV5' 
+POKY_job_id = '250304_204659_132'
 
 work_directory = f'/Users/Karen/AHNA/{PDB_id}' # set parent directory
 os.system(f"mkdir {work_directory}/Dimer") # to hold NOESY lists and other generated files
@@ -640,10 +758,10 @@ os.system(f"mkdir {work_directory}/Dimer") # to hold NOESY lists and other gener
 link = f'https://colab.research.google.com/drive/1e8FbwUuS1sdFqk5uj5KVkRAOroIqUOQA#scrollTo=j1b-8LoRjF74'
 
 #AlphaFold PDB files with protons added
-AF_pdb_filepath = f'{work_directory}/5HUZ_Boltz1' # PDB with protons added
+AF_pdb_filepath = f'{work_directory}/6TV5_Boltz1' # PDB with protons added
 
 # get chemical shifts
-cs_list = read_bmrb(ename=30005)  # [[nseq, atom, chemical shift], ] 
+cs_list = read_bmrb(ename=34473)  # [[nseq, atom, chemical shift], ] 
 cs_list = filter_shift_list(cs_list) # assign pseudo atoms with *
 # get sequence information for homodimers; fasta file will be provided by user
 proton_nomenclature.write_seq_file(work_directory, PDB_id)
@@ -662,7 +780,8 @@ for types in NoesyType:
     if AF_path.endswith('H.pdb'):
       AF_readPDB = readPDB(AF_path,1,nuclei = ['H',])
       AF_distMat, AF_keyList = createDistanceMatrix(AF_readPDB)
-      AF_line = create_noesy_peak_list(AF_readPDB, types, cs_list,AF_distMat)
+      # AF_line = create_noesy_peak_list(AF_readPDB, types, cs_list,AF_distMat)
+      AF_line = create_noesy_peak_list(AF_keyList, types, cs_list,AF_distMat)
       # write out NOESY peak list for each AF structure
       AF_PDB_text = open (f'{work_directory}/Dimer/{types[0].upper()}_NOESY_{PDB_id}.list', 'w')
       AF_PDB_text.write(AF_line)
@@ -702,6 +821,7 @@ for types in NoesyType:
       for j, [NH_cand, h_cand] in enumerate(combination):
       # NH_cand: [distance, nseq, 'N', nseq, 'H']
       # h_cand: [distance, nseq, 'H']
+        # print (NH_cand, h_cand)
         NH_dist, nseq, NCatom, _, Hatom = NH_cand # distance b/w NH
         h_dist, nseq2, hatom = h_cand # dist b/w NH and h (thru-space)
         if ca_contact_matrix[int(nseq)-1][int(nseq2)-1][0][1] != 1:
@@ -737,7 +857,9 @@ for types in NoesyType:
             except:
               continue
             proton_dist_probability = max(proton_dist_probability,
-                                        distMat_probability[k,l,0,1])         
+                                        distMat_probability[k,l]) 
+            # proton_dist_probability = max(proton_dist_probability,
+            #                             distMat_probability[k,l,0,1])         
         combination[j] = combination[j] + (proton_dist_probability,) # update combination list
           
       # filter combination to have all four elements
@@ -770,7 +892,7 @@ for types in NoesyType:
   content_list = content.split('\n') # take content lines and turn into list
   filter_content = list(set(content_list)) # find duplicate lists and remove them
   new_content = '\n'.join(filter_content) # take filtered list and join to strings
-
+  print ('a')
   print(new_content)
 
   f = open(f'{work_directory}/{POKY_job_id}/BestEvaluated/alt.tbl', 'w')
